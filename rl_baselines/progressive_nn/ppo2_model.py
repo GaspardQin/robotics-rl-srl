@@ -37,12 +37,11 @@ def linear(input_tensor, scope, n_hidden, *, init_scale=1.0, init_bias=0.0):
         return tf.matmul(input_tensor, weight) + bias
 
 
-def prog_mlp_extractor(flat_observations, net_arch, act_fun, prev_cols=()):
+def prog_mlp_extractor(flat_observations, net_arch, act_fun, dict_res_tensor={}):
     latent = flat_observations
     policy_only_layers = []  # Layer sizes of the network that only belongs to the policy network
     value_only_layers = []  # Layer sizes of the network that only belongs to the value network
 
-    printRed(prev_cols)
     # Test purpose
     #
     # if(len(prev_cols)>0):
@@ -63,12 +62,6 @@ def prog_mlp_extractor(flat_observations, net_arch, act_fun, prev_cols=()):
     #             # except:
     #             #     print("feed_dict no compitible", op.name)
     #     #model / pi_fc0 / w: 0
-
-
-
-
-
-
     # Iterate through the shared layers and build the shared parts of the network
     for idx, layer in enumerate(net_arch):
         if isinstance(layer, int):  # Check that this is a shared layer
@@ -84,7 +77,8 @@ def prog_mlp_extractor(flat_observations, net_arch, act_fun, prev_cols=()):
                 assert isinstance(layer['vf'], list), "Error: net_arch[-1]['vf'] must contain a list of integers."
                 value_only_layers = layer['vf']
             break  # From here on the network splits up in policy and value network
-
+    # with tf.variable_scope("res_tensor"):
+    #     tf.placeholder()
     # Build the non-shared part of the network
     latent_policy = latent
     latent_value = latent
@@ -95,8 +89,7 @@ def prog_mlp_extractor(flat_observations, net_arch, act_fun, prev_cols=()):
             print(latent_policy.name)
             with tf.variable_scope("pi_res_{}".format(idx)):
                 try:
-                    for i in range(len(prev_cols)):
-                        latent_policy += prev_cols[latent_policy.name]
+                    print(dict_res_tensor[latent_policy.name])
                 except:
                     printRed("Exception: residual insertion from previous model failed.")
             latent_policy = act_fun(latent_policy)
@@ -111,11 +104,11 @@ def prog_mlp_extractor(flat_observations, net_arch, act_fun, prev_cols=()):
 #model/pi_fc1/add:0
 
 class ProgressiveFeedForwardPolicy(ActorCriticPolicy):
-    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, prev_cols=(), reuse=False, layers=None, net_arch=None,
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, n_prev_col=0, tensor_name=[],
+                 reuse=False, layers=None, net_arch=None,
                  act_fun=tf.tanh, cnn_extractor=nature_cnn, feature_extraction="cnn", **kwargs):
         super(ProgressiveFeedForwardPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps,
                                                            n_batch, reuse=reuse, scale=(feature_extraction == "cnn"))
-
         self._kwargs_check(feature_extraction, kwargs)
 
         if layers is not None:
@@ -125,16 +118,26 @@ class ProgressiveFeedForwardPolicy(ActorCriticPolicy):
                 warnings.warn("The new `net_arch` parameter overrides the deprecated `layers` parameter!",
                               DeprecationWarning)
         # if none, then use two networks for policy and the value function
+        self.dict_res_tensor_ph = {}
         if net_arch is None:
             if layers is None:
                 layers = [64, 64]
             net_arch = [dict(vf=layers, pi=layers)]
 
+
+
+            with tf.variable_scope("res_input",reuse=False):
+                for name in tensor_name:
+                    # TODO, we need both name and the shape, only the architechture can not save you
+                    # TODO: or esle, only take the known part, just specific to this network
+                    self.dict_res_tensor_ph[name] = \
+                        tf.placeholder(dtype=ob_space.dtype, name="res_"+name, shape=[None, ])
+
         with tf.variable_scope("model", reuse=reuse):
             if feature_extraction == "cnn":
                 pi_latent = vf_latent = cnn_extractor(self.processed_obs, **kwargs)
             else:    # construction of the model, mlp
-                pi_latent, vf_latent = prog_mlp_extractor(tf.layers.flatten(self.processed_obs), net_arch, act_fun, prev_cols)
+                pi_latent, vf_latent = prog_mlp_extractor(tf.layers.flatten(self.processed_obs), net_arch, act_fun, n_prev_col)
 
             self.value_fn = linear(vf_latent, 'vf', 1)
             self.proba_distribution, self.policy, self.q_value = \
@@ -155,7 +158,8 @@ class ProgressiveFeedForwardPolicy(ActorCriticPolicy):
         # When using policy_kwargs parameter on model creation,
         # all keywords arguments must be consumed by the policy constructor except
         # the ones for the cnn_extractor network (cf nature_cnn()), where the keywords arguments
-        # are not passed explicitely (using **kwargs to forward the arguments)
+        # are not passed explicitly
+        # (using **kwargs to forward the arguments)
         # that's why there should be not kwargs left when using the mlp_extractor
         # (in that case the keywords arguments are passed explicitely)
         if feature_extraction == 'mlp' and len(kwargs) > 1:
@@ -179,8 +183,9 @@ class ProgressiveFeedForwardPolicy(ActorCriticPolicy):
 
 
 class ProgressiveMlpPolicy(ProgressiveFeedForwardPolicy):
-    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, prev_cols=(), reuse=False, **_kwargs):
-        super(ProgressiveMlpPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch, prev_cols, reuse,
+    def __init__(self, sess, ob_space, ac_space, n_env, n_steps, n_batch, n_prev_col=0, tensor_name=[], reuse=False, **_kwargs):
+        super(ProgressiveMlpPolicy, self).__init__(sess, ob_space, ac_space, n_env, n_steps, n_batch,
+                                                   n_prev_col=n_prev_col, tensor_name=tensor_name, reuse=reuse,
                                         feature_extraction="mlp", **_kwargs)
 
 
@@ -226,6 +231,7 @@ class ProgPPO2(PPO2):
         self.old_vpred_ph = None
         self.learning_rate_ph = None
         self.clip_range_ph = None
+        self.res_tensor_dict_ph = None
         self.entropy = None
         self.vf_loss = None
         self.pg_loss = None
@@ -274,14 +280,16 @@ class ProgPPO2(PPO2):
                     n_batch_step = self.n_envs
                     n_batch_train = self.n_batch // self.nminibatches
 
+                tensor_name, _ = self.getResidualTensorName()
                 act_model = self.policy(self.sess, self.observation_space, self.action_space, self.n_envs, 1,
-                                        n_batch_step, prev_cols=self.prev_cols, reuse=False, **self.policy_kwargs)
+                                        n_batch_step, n_prev_col=len(self.prev_cols), tensor_name=tensor_name,
+                                        reuse=False, **self.policy_kwargs)
 
                 with tf.variable_scope("train_model", reuse=True, custom_getter=tf_util.outer_scope_getter("train_model")):
 
                     train_model = self.policy(self.sess, self.observation_space, self.action_space,
                                               self.n_envs // self.nminibatches, self.n_steps, n_batch_train,
-                                              prev_cols=self.prev_cols,
+                                              n_prev_col=len(self.prev_cols), tensor_name=tensor_name,
                                               reuse=True, **self.policy_kwargs)
 
                 with tf.variable_scope("loss", reuse=False):
@@ -366,42 +374,43 @@ class ProgPPO2(PPO2):
 
                 self.summary = tf.summary.merge_all()
 
-    def residualBlock(self, obs):
 
+    def getResidualTensorName(self):
         res_tensor_name = []
         res_tensor_value = {}
-        graph = self.graph
+        if(len(self.prev_cols)==0):
+            return "", ""
+        graph = self.prev_cols[0].sess.graph
         all_operations = graph.get_operations()
         for ops in all_operations:
             name = ops.name
-            if (("loss"not in name) and ("train_model/model/" in name) and ("add" in name) and "res" not in name ):
+            if (("loss" not in name) and ("train_model/model/" in name) and ("add" in name) and "res" not in name):
                 res_tensor_name.append(name)
                 res_tensor_value[name] = []
+        return res_tensor_name, res_tensor_value
+
+    """
+    This part is very slow, should get quiker.
+    """
+    def residualBlock(self, obs):
+        res_tensor_name, res_tensor_value = self.getResidualTensorName()
 
         for model in self.prev_cols:
             sess = model.sess
             prev_graph = sess.graph
             feed_dict = {prev_graph.get_operation_by_name('train_model/input/Ob').values(): obs}
             for name in res_tensor_name:
-                printRed(name)
                 tensor = prev_graph.get_operation_by_name(name).values()
-                try:
-                    res_tensor_value[name].append((sess.run(tf.squeeze(tensor), feed_dict)))
-                except:
-                    tmp = sess.run(tensor, feed_dict)
-                    printRed(tmp)
-                    set_trace()
-                for k in res_tensor_value.keys(): print(type(res_tensor_value[k][0]))
-            set_trace()
+                res_tensor_value[name].append((sess.run(tf.squeeze(tensor), feed_dict)))
+        if(len(self.prev_cols)>0):
+            for name in res_tensor_name:
+                if(len(res_tensor_value[name][0].shape)==1):
+                    batch_size = res_tensor_value[name][0].shape[0]
+                    for i,arr in enumerate(res_tensor_value[name]):
+                        res_tensor_value[name][i] = arr.reshape([batch_size,1])
+                res_tensor_value[name] = np.concatenate(res_tensor_value[name],axis=1)
 
-        if (len(self.prev_cols) > 0):
-            model = self.prev_cols[0]
-            sess = model.sess
-            graph = sess.graph
-
-            tensor = graph.get_operation_by_name('model/vf_fc0/add').values()
-            feed_dict = {graph.get_operation_by_name('input/Ob').values(): obs}
-            set_trace()
+        return res_tensor_value, res_tensor_name
 
     def _train_step(self, learning_rate, cliprange, obs, returns, masks, actions, values, neglogpacs, update,
                     writer, states=None):
@@ -424,6 +433,7 @@ class ProgPPO2(PPO2):
         """
         advs = returns - values
         advs = (advs - advs.mean()) / (advs.std() + 1e-8)
+        res_tensor_value, res_tensor_name = self.residualBlock(obs)
         td_map = {self.train_model.obs_ph: obs, self.action_ph: actions, self.advs_ph: advs, self.rewards_ph: returns,
                   self.learning_rate_ph: learning_rate, self.clip_range_ph: cliprange,
                   self.old_neglog_pac_ph: neglogpacs, self.old_vpred_ph: values}
@@ -437,7 +447,7 @@ class ProgPPO2(PPO2):
             update_fac = self.n_batch // self.nminibatches // self.noptepochs // self.n_steps + 1
 
 
-        self.residualBlock(obs)
+
 
         if writer is not None:
             # run loss backprop with summary, but once every 10 runs save the metadata (memory, compute time, ...)
