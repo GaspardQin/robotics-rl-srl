@@ -3,7 +3,7 @@ import pickle
 import re
 from stable_baselines.common.policies import CnnPolicy, CnnLstmPolicy, CnnLnLstmPolicy, MlpPolicy, MlpLstmPolicy, \
     MlpLnLstmPolicy
-from rl_baselines.progressive_nn.ppo2_model import ProgressiveMlpPolicy
+from rl_baselines.progressive_nn.prnn_policy import ProgressiveMlpPolicy
 from rl_baselines.utils import createEnvs
 
 
