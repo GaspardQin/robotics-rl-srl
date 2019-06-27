@@ -33,6 +33,7 @@ N_CONTACTS_BEFORE_TERMINATION = 15 #10
 
 DELTA_POS = 0.1  # DELTA_POS for continuous actions
 N_DISCRETE_ACTIONS = 4
+RECORD = False
 
 # Init seaborn
 sns.set()
@@ -158,6 +159,16 @@ class OmniRobotEnv(SRLGymEnv):
             print("Connected to server on port {} (received message: {})".format(
                 self.server_port, msg))
 
+            # send the task information
+            if USING_OMNIROBOT:
+                if self.simple_continual_target == True:
+                    self.socket.send_json({'task': 'simple_continual'})
+                elif self.circular_continual_move == True:
+                    self.socket.send_json({'task': 'circular_continual'})
+                elif self.square_continual_move ==True:
+                    self.socket.send_json({'task': 'square_continual'})
+                print("Task required sent...")
+
         self.action = [0, 0]
         self.reward = 0
         self.robot_pos = np.array([0, 0])
@@ -227,13 +238,13 @@ class OmniRobotEnv(SRLGymEnv):
         #  Receive a camera image from the server
         self.observation = self.getObservation() if generated_observation is None else generated_observation * 255
         done = self._hasEpisodeTerminated()
-
         self.render()
 
         if self.saver is not None:
             self.saver.step(self.observation, action_from_teacher if action_grid_walker is not None else action_to_step,
                             self.reward, done, self.getGroundTruth(), action_proba=action_proba)
-        old_observation = self.getObservation()
+        if not generated_observation is None:
+            old_observation = self.getObservation()
 
         if self.use_srl:
             return self.getSRLState(self.observation if generated_observation is None else old_observation), self.reward, done, {}
@@ -312,7 +323,8 @@ class OmniRobotEnv(SRLGymEnv):
         if self.saver is not None:
             self.saver.reset(self.observation,
                              self.getTargetPos(), self.getGroundTruth())
-        old_observation = self.getObservation()
+        if not generated_observation is None:
+            old_observation = self.getObservation()
 
         if self.use_srl:
             return self.getSRLState(self.observation if generated_observation is None else old_observation)
@@ -368,6 +380,12 @@ class OmniRobotEnv(SRLGymEnv):
             plt.draw()
             # Wait a bit, so that plot is visible
             plt.pause(0.0001)
+
+            # Save the image
+            if RECORD:
+                img_log_dir = "/home/interns/Pictures/records"
+                img_log_dir += "/frame_{:03d}.png".format(self._env_step_counter)
+                plt.imsave(img_log_dir, self.observation_with_boundary)
         return self.observation
 
     def initVisualizeBoundary(self):

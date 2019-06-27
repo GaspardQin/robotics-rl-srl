@@ -1,7 +1,7 @@
 from __future__ import division, print_function, absolute_import
 
 from real_robots.constants import *
-
+DEBUG = False
 
 class OmnirobotManagerBase(object):
     def __init__(self, simple_continual_target=False, circular_continual_move=False, square_continual_move=False,
@@ -121,7 +121,6 @@ class OmnirobotManagerBase(object):
 
             # empty list of previous states
             self.robot.emptyHistory()
-
             self.resetEpisode()
 
         elif command == 'action':
@@ -156,7 +155,6 @@ class OmnirobotManagerBase(object):
             print("Unsupported action: ", action)
 
         # Determinate the reward for this step
-
         if self.circular_continual_move or self.square_continual_move or self.eight_continual_move:
             step_counter = msg.get("step_counter", None)
             assert step_counter is not None
@@ -182,11 +180,15 @@ class OmnirobotManagerBase(object):
                 pass
             else:
                 self.robot.popOfHistory()
-                self.reward *= np.linalg.norm(self.robot.robot_pos - self.robot.robot_pos_past_k_steps[0])
+                self.reward *= np.linalg.norm(np.array(self.robot.robot_pos) -
+                                              np.array(self.robot.robot_pos_past_k_steps[0]))
 
             if has_bumped:
                 self.reward += self.lambda_c * self.lambda_c * REWARD_BUMP_WALL
-
+            # print(np.array(self.robot.robot_pos), np.array(self.robot.robot_pos_past_k_steps[0]),
+            #                                                self.lambda_c * self.lambda_c * REWARD_BUMP_WALL,
+            #       self.lambda_c * (1 - (np.linalg.norm(self.robot.robot_pos, ord=ord) - RADIUS) ** 2),
+            #       self.reward, self.robot.robot_pos_past_k_steps )
         else:
             # Consider that we reached the target if we are close enough
             # we detect that computing the difference in area between TARGET_INITIAL_AREA

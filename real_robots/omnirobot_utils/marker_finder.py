@@ -3,7 +3,10 @@ import cv2
 from os.path import join
 import yaml
 import argparse
-
+from real_robots.omnirobot_utils.utils import PosTransformer
+from scipy.spatial.transform import Rotation as R
+from real_robots.constants import *
+import pdb
 
 def rotateMatrix90(matrix):
     """
@@ -48,6 +51,7 @@ class MakerFinder():
             except yaml.YAMLError as exc:
                 print(exc)
         self.marker_img = None
+        self.last_target_pos = [0, 0]
 
     def setMarkerCode(self, marker_id, marker_code, real_length):
         """
@@ -109,7 +113,7 @@ class MakerFinder():
                 ret = False
         return ret
     
-    def labelSquares(self, img, visualise: bool):
+    def labelSquares(self, img, visualise):
         """
         TODO
         :param img:
@@ -119,8 +123,9 @@ class MakerFinder():
         self.gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         self.edge = cv2.adaptiveThreshold(self.gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY_INV, 31, 5)
 
-        _, cnts, _ = cv2.findContours(self.edge, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
-
+        # changed in opencv version 4.*.* where there is only 2 outputs
+        # cnts, _ = cv2.findContours(self.edge, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+        _, cnts, _ = cv2.findContours(self.edge, cv2.RETR_LIST,cv2.CHAIN_APPROX_NONE)
         candidate_contours = []
         candidate_approx = []
 
@@ -239,7 +244,7 @@ class MakerFinder():
 
     def findMarker(self, marker_id, visualise=False):
         """
-        TODO
+        TODO find the marker's pixel position
         :param marker_id:
         :param visualise: (bool)
         :return:
@@ -303,8 +308,11 @@ class MakerFinder():
                     cv2.imshow('frame', reconst)
                     cv2.waitKey(0)
                     cv2.destroyAllWindows()
-                return tag_trans_coord_cam, tag_rot_coord_cam
-        raise ValueError("Not Found Tag")
+
+                pos_coord_pixel = np.mean(self.blob_corners[i_square], axis=0).astype(int)
+                self.last_target_pos = pos_coord_pixel.reshape((2,1))
+                return pos_coord_pixel
+        return self.last_target_pos
 
     def getMarkerPose(self, img, marker_ids, visualise=False):
         """
@@ -342,30 +350,45 @@ def transformPosCamToGround(pos_coord_cam):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Script for finding a marker in a dataset")
-    parser.add_argument('--camera-info-path', type=str, default=None,
-                        help='Path to camera calibration config file (ros file).')
-    parser.add_argument('--path-to-data', type=str, default=None,
-                        help="Path to the dataset.")
-
-    # Ignore unknown args for now
-    args, unknown = parser.parse_known_args()
-    assert args.camera_info_path is not None and args.path_to_data is not None, \
-        "You should specify both the camera config file and dataset path to find marker position !"
+    # parser = argparse.ArgumentParser(description="Script for finding a marker in a dataset")
+    # parser.add_argument('--camera-info-path', type=str, default=None,
+    #                     help='Path to camera calibration config file (ros file).')
+    # parser.add_argument('--path-to-data', type=str, default=None,
+    #                     help="Path to the dataset.")
+    #
+    # # Ignore unknown args for now
+    # args, unknown = parser.parse_known_args()
+    # assert args.camera_info_path is not None and args.path_to_data is not None, \
+    #     "You should specify both the camera config file and dataset path to find marker position !"
 
     # example, find the markers in the observation image, and get it's position in the ground
     # Originally:
     #  camera_info_path =
     #       "/home/gaspard/Documents/ros_omnirobot/catkin_ws/src/omnirobot-dream/omnirobot_remote/cam_calib_info.yaml"
     #  path = "/home/gaspard/Documents/ros_omnirobot/robotics-rl-srl-omnirobot/data/omnirobot_real_20190125_155902/"
-    camera_info_path = args.camera_info_path
-    path = args.path_to_data
+    camera_info_path = "cam_calib_info.yaml"
+    # camera_info_path = "real_robots/omnirobot_utils/cam_calib_info.yaml"
+    with open(camera_info_path, 'r') as stream:
+        try:
+            contents = yaml.load(stream)
+            camera_matrix = np.array(contents['camera_matrix']['data'])
+            origin_size = np.array(
+                [contents['image_height'], contents['image_width']])
+            camera_matrix = np.reshape(camera_matrix, (3, 3))
+            dist_coeffs = np.array(
+                contents["distortion_coefficients"]["data"]).reshape((1, 5))
+        except yaml.YAMLError as exc:
+            print(exc)
+    # path = args.path_to_data
+    #
+    # cropped_img = cv2.imread(join(path, "record_008/frame000015.jpg"))
+    cap = cv2.VideoCapture(0)
 
-    cropped_img = cv2.imread(join(path, "record_008/frame000015.jpg"))
+    # img = np.zeros((480, 640, 3), np.uint8)
+    # img[0:480, 80:560, :] = cv2.resize(cropped_img, (480, 480))
 
-    img = np.zeros((480, 640, 3), np.uint8)
-    img[0:480, 80:560, :] = cv2.resize(cropped_img, (480, 480))
-    robot_tag_img = cv2.imread("robot_tag.png")
+    robot_tag_img = cv2.imread("robot_margin3_pixel_only_tag.png")
+    # robot_tag_img = cv2.imread("real_robots/omnirobot_utils/robot_margin3_pixel_only_tag.png")
     robot_tag_code = np.array([
         [0, 0, 0, 0, 0, 0, 0, 0, 0],
         [0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -376,11 +399,31 @@ if __name__ == "__main__":
         [0, 0, 1, 1, 1, 1, 1, 0, 0],
         [0, 0, 0, 0, 0, 0, 0, 0, 0],
         [0, 0, 0, 0, 0, 0, 0, 0, 0]], dtype=np.uint8)
-
+    ret, frame = cap.read()
     maker_finder = MakerFinder(camera_info_path)
     maker_finder.setMarkerCode('robot', robot_tag_code, 0.18)  # marker size 0.18m * 0.18m
     maker_finder.setMarkerImg(robot_tag_img)
-    pos_coord_cam, rot_coord_cam = maker_finder.getMarkerPose(img, 'robot', False)
-    
-    pos_coord_ground = transformPosCamToGround(pos_coord_cam)
-    print("position in the ground: ", pos_coord_cam)
+
+
+    while (True):
+        ret, frame = cap.read()
+
+        pos_coord_pixel = maker_finder.getMarkerPose(frame, 'robot', visualise=False)
+        # pos_coord_ground = transformPosCamToGround(pos_coord_cam)
+        #
+        # r = R.from_euler('xyz', CAMERA_ROT_EULER_COORD_GROUND, degrees=True)
+        # camera_rot_mat_coord_ground = r.as_dcm()
+        #
+        # pos_transformer = PosTransformer(camera_matrix, dist_coeffs,
+        #                                  CAMERA_POS_COORD_GROUND, camera_rot_mat_coord_ground)
+        # pos_coord_pixel = pos_transformer.phyPosGround2PixelPos(pos_coord_ground)
+        # pos_coord_pixel = pos_coord_pixel.astype(int)
+
+        # print("position in the ground: ", pos_coord_ground)
+        # print("position in the camera: ", pos_coord_cam)
+        print("position in the image: ", pos_coord_pixel)
+
+        cv2.circle(frame, tuple(pos_coord_pixel), 5, [0,255,0],thickness=5)
+        cv2.imshow('test', frame)
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break

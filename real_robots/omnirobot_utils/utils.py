@@ -6,8 +6,8 @@ import cv2
 
 
 class PosTransformer(object):
-    def __init__(self, camera_mat: np.ndarray, dist_coeffs: np.ndarray,
-                 pos_camera_coord_ground: np.ndarray, rot_mat_camera_coord_ground: np.ndarray):
+    def __init__(self, camera_mat, dist_coeffs,
+                 pos_camera_coord_ground, rot_mat_camera_coord_ground):
         """
         Transform the position among physical position in camera coordinate,
                                      physical position in ground coordinate,

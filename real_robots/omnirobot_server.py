@@ -6,8 +6,8 @@ import rospy
 import os
 import time
 
-
 import numpy as np
+import matplotlib.pyplot as plt
 import zmq
 import argparse
 import yaml
@@ -18,12 +18,16 @@ from geometry_msgs.msg import Vector3, PoseStamped, Twist
 from std_msgs.msg import Bool
 from omnirobot_msgs.msg import WheelSpeeds
 
+from scipy.spatial.transform import Rotation as R
 
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
-
+from real_robots.omnirobot_utils.utils import PosTransformer
 from real_robots.constants import *
 from real_robots.utils import sendMatrix
 from real_robots.omnirobot_utils.omnirobot_manager_base import OmnirobotManagerBase
+from real_robots.omnirobot_utils.marker_render import MarkerRender
+import real_robots.omnirobot_utils.marker_finder as mf
+
 assert USING_OMNIROBOT, "Please set USING_OMNIROBOT to True in real_robots/constants.py"
 
 NO_TARGET_MODE = False
@@ -31,9 +35,11 @@ NO_TARGET_MODE = False
 bridge = CvBridge()
 should_exit = [False]
 
+NOISE_VAR_TARGET_PIXEL = 1.0  # pixel noise on target marker
+NOISE_VAR_ROBOT_PIXEL = 1.0
 
 class OmniRobot(object):
-    def __init__(self, init_x, init_y, init_yaw):
+    def __init__(self, init_x, init_y, init_yaw, history_size=10):
         """
         Class for controlling omnirobot based on topic mechanism of ros
         """
@@ -55,6 +61,9 @@ class OmniRobot(object):
         # Target's real position on the grid
         self.target_pos = [0, 0]
         self.target_yaw = 0
+
+        self.history_size = history_size
+        self.robot_pos_past_k_steps = []
 
         # status of moving
         self.move_finished = False
@@ -80,7 +89,7 @@ class OmniRobot(object):
         self.switch_pos_controller_pub = rospy.Publisher("/switch/pos_controller", Bool, queue_size=10)
 
         self.wheel_speeds_command_pub = rospy.Publisher("/wheel_speeds_commands", WheelSpeeds, queue_size=10)
-        self.velocity_command_pub = rospy.Publisher("/velocity_commands", Twist,  queue_size=10)
+        self.velocity_command_pub = rospy.Publisher("/velocity_commands", Twist, queue_size=10)
         # known issues, without sleep 1 second, publishers could not been setup
         rospy.sleep(1)
         # https://answers.ros.org/question/9665/test-for-when-a-rospy-publisher-become-available/?answer=14125#post-id-14125
@@ -103,6 +112,18 @@ class OmniRobot(object):
         self.robot_pos_cmd[1] = max(y, MIN_Y)
         self.robot_pos_cmd[1] = min(y, MAX_Y)
         self.robot_yaw_cmd = self.normalizeAngle(yaw)
+
+    def getHistorySize(self):
+        return self.history_size
+
+    def appendToHistory(self, pos):
+        self.robot_pos_past_k_steps.append(pos[:])
+
+    def popOfHistory(self):
+        self.robot_pos_past_k_steps.pop(0)
+
+    def emptyHistory(self):
+        self.robot_pos_past_k_steps = []
 
     def setRobotCmd(self, x, y, yaw):
         """
@@ -163,8 +184,9 @@ class OmniRobot(object):
         """
         self.robot_pos[0] = pose_stamped_msg.pose.position.x
         self.robot_pos[1] = pose_stamped_msg.pose.position.y
-        self.robot_yaw = euler_from_quaternion([pose_stamped_msg.pose.orientation.x, pose_stamped_msg.pose.orientation.y,
-                                                pose_stamped_msg.pose.orientation.z, pose_stamped_msg.pose.orientation.w])[2]
+        self.robot_yaw = \
+            euler_from_quaternion([pose_stamped_msg.pose.orientation.x, pose_stamped_msg.pose.orientation.y,
+                                   pose_stamped_msg.pose.orientation.z, pose_stamped_msg.pose.orientation.w])[2]
 
         if NO_TARGET_MODE and self.target_pos_changed:
             # simulate the target's position update
@@ -182,12 +204,13 @@ class OmniRobot(object):
         """
 
         if self.target_pos_changed:
-            if pose_stamped_msg.pose.position.x < TARGET_MAX_X and pose_stamped_msg.pose.position.x > TARGET_MIN_X  \
+            if pose_stamped_msg.pose.position.x < TARGET_MAX_X and pose_stamped_msg.pose.position.x > TARGET_MIN_X \
                     and pose_stamped_msg.pose.position.y > TARGET_MIN_Y and pose_stamped_msg.pose.position.y < TARGET_MAX_Y:
                 self.target_pos[0] = pose_stamped_msg.pose.position.x
                 self.target_pos[1] = pose_stamped_msg.pose.position.y
-                self.target_yaw = euler_from_quaternion([pose_stamped_msg.pose.orientation.x, pose_stamped_msg.pose.orientation.y,
-                                                         pose_stamped_msg.pose.orientation.z, pose_stamped_msg.pose.orientation.w])[2]
+                self.target_yaw = \
+                    euler_from_quaternion([pose_stamped_msg.pose.orientation.x, pose_stamped_msg.pose.orientation.y,
+                                           pose_stamped_msg.pose.orientation.z, pose_stamped_msg.pose.orientation.w])[2]
                 self.target_pos_changed = False
 
     def moveFinishedCallback(self, move_finished_msg):
@@ -252,7 +275,7 @@ class OmniRobot(object):
         msg = Bool(True)
         self.switch_velocity_controller_pub.publish(msg)
         self.enabled_velocity_controller = True
-    
+
     def disablePosController(self):
         """
         Disable the pos controller
@@ -284,7 +307,7 @@ class OmniRobot(object):
         :param front_speed: (float) linear speed of front wheel (meter/s)
         :param right_speed: (float) linear speed of right wheel (meter/s)
         """
-        assert self.enabled_pos_controller == False and self.enabled_velocity_controller == False,\
+        assert self.enabled_pos_controller == False and self.enabled_velocity_controller == False, \
             "you should disable pos_controller and velocity controller before controlling wheel speed directly"
         wheel_speed_msg = WheelSpeeds()
         wheel_speed_msg.stamp = rospy.now()
@@ -319,7 +342,6 @@ class OmniRobot(object):
         velocity_command_msg.angular.y = 0
         velocity_command_msg.angular.z = speed_yaw
         self.velocity_command_pub.publish(velocity_command_msg)
-        
 
     @staticmethod
     def normalizeAngle(angle):
@@ -348,20 +370,20 @@ class ImageCallback(object):
         self.distortion_coefficients = distortion_coefficients
 
     def imageCallback(self, msg):
-        try:    
+        try:
             # Convert your ROS Image message to OpenCV
             cv2_img = bridge.imgmsg_to_cv2(msg, "rgb8")
-            
+            self.cv2_img = cv2_img
             if self.first_msg:
                 shape = cv2_img.shape
                 min_length = min(shape[0], shape[1])
                 up_margin = int((shape[0] - min_length) / 2)  # row
                 left_margin = int((shape[1] - min_length) / 2)  # col
                 self.valid_box = [up_margin, up_margin + min_length, left_margin, left_margin + min_length]
-                print("origin size: {}x{}".format(shape[0],shape[1]))
+                print("origin size: {}x{}".format(shape[0], shape[1]))
                 print("crop each image to a square image, cropped size: {}x{}".format(min_length, min_length))
                 self.first_msg = False
-            
+
             undistort_image = cv2.undistort(cv2_img, self.camera_matrix, self.distortion_coefficients)
             self.valid_img = undistort_image[self.valid_box[0]:self.valid_box[1], self.valid_box[2]:self.valid_box[3]]
 
@@ -405,14 +427,14 @@ class OmnirobotManager(OmnirobotManagerBase):
     """
     def __init__(self):
         super(OmnirobotManager, self).__init__(second_cam_topic=SECOND_CAM_TOPIC)
-        self.robot = OmniRobot(0,0,0) # assign the real robot object to manager
+        self.robot = OmniRobot(0, 0, 0)  # assign the real robot object to manager
         self.episode_idx = 0
         self.episode_step = 0
 
     def resetEpisode(self):
         """
-        override orignal method
-        Give the correct sequance of commands to the robot 
+        override original method
+        Give the correct sequence of commands to the robot
         to rest environment between the different episodes
         """
         if self.second_cam_topic is not None:
@@ -444,16 +466,49 @@ class OmnirobotManager(OmnirobotManagerBase):
             else:
                 print("Can't see the target, please move it into the boundary!")
 
+def SetMarkers(image, robot_path, target_path, omnirobot, pos_transformer, marker_finder):
+    """
+    cover the robot and target image on the image that is going to be feed to the model
+    :param image: 
+    :param robot_path: 
+    :param target_path: 
+    :param omnirobot: 
+    :param pos_transformer: 
+    :param marker_finder: 
+    :return: 
+    """
+    image_copy = image.copy()
+    target_marker_margin = [4, 4, 4, 4]
+    robot_marker_margin = [3, 3, 3, 3]
+    target_render = MarkerRender(noise_var=NOISE_VAR_TARGET_PIXEL)
+    robot_render = MarkerRender(noise_var=NOISE_VAR_ROBOT_PIXEL)
+    robot_render.setMarkerImage(cv2.imread(
+        robot_path, cv2.IMREAD_COLOR), robot_marker_margin)
+    target_render.setMarkerImage(cv2.imread(
+        target_path, cv2.IMREAD_COLOR), target_marker_margin)
+    robot_pixel_pos = marker_finder.getMarkerPose(image_copy, 'robot', False)
+    # render the target and robot's image
+    image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+    image = target_render.addMarker(image, pos_transformer.phyPosGround2PixelPos(omnirobot.target_pos)-np.array([80,0]).reshape((2, 1)),
+                                   omnirobot.target_yaw, 1.05)
+    if target_path == "real_robots/omnirobot_utils/red_square.png":
+        image = robot_render.addMarker(image, np.array(robot_pixel_pos).reshape((2, 1))-np.array([-3,3]).reshape((2, 1)), omnirobot.robot_yaw, 1.05)
+    image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    return image
 
 if __name__ == '__main__':
     with open(CAMERA_INFO_PATH, 'r') as stream:
         try:
             contents = yaml.load(stream)
-            camera_matrix = np.array(contents['camera_matrix']['data']).reshape((3,3))
+            camera_matrix = np.array(contents['camera_matrix']['data']).reshape((3, 3))
             distortion_coefficients = np.array(
                 contents['distortion_coefficients']['data']).reshape((1, 5))
         except yaml.YAMLError as exc:
             print(exc)
+    rotate = R.from_euler('xyz', CAMERA_ROT_EULER_COORD_GROUND, degrees=True)
+    camera_rot_mat_coord_ground = rotate.as_dcm()
+    pos_transformer = PosTransformer(camera_matrix, distortion_coefficients,
+                                     CAMERA_POS_COORD_GROUND, camera_rot_mat_coord_ground)
     rospy.init_node('omni_robot_server', anonymous=True)
     # warning for no target mode
     if NO_TARGET_MODE:
@@ -481,6 +536,23 @@ if __name__ == '__main__':
     socket.send_json({'msg': 'hello'})
     print("Connected to client")
 
+    # receive task information from env
+    task = socket.recv_json()
+    simple_continual_target = False
+    circular_continual_move = False
+    # set the robot and target image path
+    if task['task'] == 'simple_continual':
+        target_path = "real_robots/omnirobot_utils/red_square.png"
+        simple_continual_target = True
+    elif task['task'] == 'circular_continual':
+        target_path = "real_robots/omnirobot_utils/blue_square.png"
+        circular_continual_move =True
+    elif task['task'] == 'square_continual':
+        target_path = "real_robots/omnirobot_utils/green_square.png"
+    robot_path = "real_robots/omnirobot_utils/robot_margin3_pixel_only_tag.png"
+
+    print("Task received, doing task : {}, using : {}".format(task['task'], target_path))
+
     action = 0
     episode_step = 0
     episode_idx = -1
@@ -491,15 +563,36 @@ if __name__ == '__main__':
     omnirobot_manager.robot.stop()  # after stop, the robot need to be reset
     omnirobot_manager.robot.resetOdom(0, 0, 0)
     omnirobot_manager.robot.reset()
+    omnirobot_manager.simple_continual_target = simple_continual_target
+    omnirobot_manager.circular_continual_move = circular_continual_move
+    reward_total = 0.0
 
     omnirobot_manager.robot.pubPosCmd()
-    r = rospy.Rate(RL_CONTROL_FREQ) 
+    r = rospy.Rate(RL_CONTROL_FREQ)
+    # find robot's position
+    robot_tag_code = np.array([
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 1, 1, 0, 1, 1, 0, 0],
+        [0, 0, 1, 1, 0, 1, 1, 0, 0],
+        [0, 0, 1, 0, 1, 0, 1, 0, 0],
+        [0, 0, 1, 1, 1, 1, 1, 0, 0],
+        [0, 0, 1, 1, 1, 1, 1, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [0, 0, 0, 0, 0, 0, 0, 0, 0]], dtype=np.uint8)
+    robot_tag_img = cv2.imread(robot_path)
+    marker_finder = mf.MakerFinder(CAMERA_INFO_PATH)
+    marker_finder.setMarkerCode('robot', robot_tag_code, 0.18)
+    marker_finder.setMarkerImg(robot_tag_img)
+
     while not rospy.is_shutdown():
         print("wait for new command")
         msg = socket.recv_json()
 
         print("msg: {}".format(msg))
         omnirobot_manager.processMsg(msg)
+        if msg.get('command', None) == 'reset':
+            reward_total = 0
 
         # wait for robot to finish the action, timeout 30s
         timeout = 30  # second
@@ -525,6 +618,7 @@ if __name__ == '__main__':
         print("reward: {}".format(omnirobot_manager.reward))
         print("omni_robot position", omnirobot_manager.robot.robot_pos)
         print("target position", omnirobot_manager.robot.target_pos)
+        reward_total += omnirobot_manager.reward
         socket.send_json(
             {
                 # XYZ position
@@ -542,9 +636,13 @@ if __name__ == '__main__':
 
         if IMAGE_TOPIC is not None:
             # to contiguous, otherwise ZMQ will complain
+            original_image = SetMarkers(original_image, robot_path, target_path, omnirobot_manager.robot,
+                                        pos_transformer,marker_finder)
             img = np.ascontiguousarray(original_image, dtype=np.uint8)
             sendMatrix(socket, img)
-        r.sleep()
 
+        r.sleep()
+        print("Time step :", msg['step_counter'],  "Total reward : ", reward_total)
+    cv2.destroyAllWindows()
     print("Exiting server - closing socket...")
     socket.close()

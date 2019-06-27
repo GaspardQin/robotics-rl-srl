@@ -188,7 +188,6 @@ def main():
     load_args = parseArguments()
     train_args, load_path, algo_name, algo_class, srl_model_path, env_kwargs = loadConfigAndSetup(load_args)
     log_dir, envs, algo_args = createEnv(load_args, train_args, algo_name, algo_class, env_kwargs)
-
     assert (not load_args.plotting and not load_args.action_proba)\
         or load_args.num_cpu == 1, "Error: cannot run plotting with more than 1 CPU"
 
@@ -308,7 +307,7 @@ def main():
             unstack_val = coor_plt.shape[1] // train_args.get("num_stack", 1)
             coor_plt = coor_plt[:, -unstack_val:]
 
-            # updating the 3d vertices for the line and the dot drawing, to avoid redrawing the entire image
+            # updating the 3d vertices for the line a+nd the dot drawing, to avoid redrawing the entire image
             if registered_env[train_args["env"]][2] == PlottingType.PLOT_3D:
                 line._verts3d = (coor_plt[:, 0], coor_plt[:, 1], coor_plt[:, 2])
                 point._offsets3d = (coor_plt[-1:, 0], coor_plt[-1:, 1], coor_plt[-1:, 2])

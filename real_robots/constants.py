@@ -10,8 +10,10 @@ SERVER_PORT = 7777
 HOSTNAME = 'localhost'
 USING_REAL_BAXTER = False
 USING_ROBOBO = False
-USING_OMNIROBOT = False
-USING_OMNIROBOT_SIMULATOR = True
+USING_OMNIROBOT = True
+USING_OMNIROBOT_SIMULATOR = False
+# USING_OMNIROBOT = False
+# USING_OMNIROBOT_SIMULATOR = True
 assert sum([USING_REAL_BAXTER, USING_ROBOBO, USING_OMNIROBOT, USING_OMNIROBOT_SIMULATOR]) <= 1, \
     "You can only use one real robot at a time"
 # For compatibility with teleop_client
