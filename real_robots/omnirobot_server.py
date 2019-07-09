@@ -7,7 +7,6 @@ import os
 import time
 
 import numpy as np
-import matplotlib.pyplot as plt
 import zmq
 import argparse
 import yaml
@@ -27,16 +26,15 @@ from real_robots.utils import sendMatrix
 from real_robots.omnirobot_utils.omnirobot_manager_base import OmnirobotManagerBase
 from real_robots.omnirobot_utils.marker_render import MarkerRender
 import real_robots.omnirobot_utils.marker_finder as mf
-
 assert USING_OMNIROBOT, "Please set USING_OMNIROBOT to True in real_robots/constants.py"
 
-NO_TARGET_MODE = False
+NO_TARGET_MODE = True
 
 bridge = CvBridge()
 should_exit = [False]
 
-NOISE_VAR_TARGET_PIXEL = 1.0  # pixel noise on target marker
-NOISE_VAR_ROBOT_PIXEL = 1.0
+NOISE_VAR_TARGET_PIXEL = 2  # pixel noise on target marker
+NOISE_VAR_ROBOT_PIXEL = 2
 
 class OmniRobot(object):
     def __init__(self, init_x, init_y, init_yaw, history_size=10):
@@ -58,6 +56,10 @@ class OmniRobot(object):
         self.robot_pos_cmd = self.init_pos[:]
         self.robot_yaw_cmd = self.init_yaw
 
+        # Target's set position on the grid
+        self.target_pos_cmd = np.float32([0, 0])
+        self.target_yaw_cmd = 0.0
+
         # Target's real position on the grid
         self.target_pos = [0, 0]
         self.target_yaw = 0
@@ -71,6 +73,8 @@ class OmniRobot(object):
 
         # Distance for each step
         self.step_distance = STEP_DISTANCE
+
+        self.step_distance_target = STEP_DISTANCE_TARGET
 
         self.visual_robot_sub = rospy.Subscriber(
             "/visual_robot_pose", PoseStamped, self.visualRobotCallback, queue_size=10)
@@ -100,6 +104,23 @@ class OmniRobot(object):
         self.switch_pos_controller_pub.publish(Bool(True))
         self.switch_velocity_controller_pub.publish(Bool(True))
 
+    def renderEnvLuminosityNoise(self, origin_image, noise_var=0.1, in_RGB=False, out_RGB=False):
+        """
+        render the different environment luminosity
+        """
+        # variate luminosity and color
+        origin_image_LAB = cv2.cvtColor(
+            origin_image, cv2.COLOR_RGB2LAB if in_RGB else cv2.COLOR_BGR2LAB, cv2.CV_32F)
+        origin_image_LAB[:, :, 0] = origin_image_LAB[:,
+                                                     :, 0] * (np.random.randn() * noise_var + 1.0)
+        origin_image_LAB[:, :, 1] = origin_image_LAB[:,
+                                                     :, 1] * (np.random.randn() * noise_var + 1.0)
+        origin_image_LAB[:, :, 2] = origin_image_LAB[:,
+                                                     :, 2] * (np.random.randn() * noise_var + 1.0)
+        out_image = cv2.cvtColor(
+            origin_image_LAB, cv2.COLOR_LAB2RGB if out_RGB else cv2.COLOR_LAB2BGR, cv2.CV_8UC3)
+        return out_image
+
     def setRobotCmdConstrained(self, x, y, yaw):
         """
         set the position command for the robot, the command will be automatically constrained
@@ -112,6 +133,29 @@ class OmniRobot(object):
         self.robot_pos_cmd[1] = max(y, MIN_Y)
         self.robot_pos_cmd[1] = min(y, MAX_Y)
         self.robot_yaw_cmd = self.normalizeAngle(yaw)
+
+    def setTargetCmd(self, x, y, yaw):
+        self.target_pos_cmd[0] = x
+        self.target_pos_cmd[1] = y
+        self.target_yaw_cmd = self.normalizeAngle(yaw)
+
+        self.target_pos = self.target_pos_cmd.tolist()
+        self.target_yaw = self.normalizeAngle(self.target_yaw_cmd)
+
+    def targetMove(self, action=None):
+        assert action !=None
+        if action =="forward":
+            self.setTargetCmd(
+                self.target_pos_cmd[0] + self.step_distance_target, self.target_pos_cmd[1], self.target_yaw)
+        elif action =="backward":
+            self.setTargetCmd(
+                self.target_pos_cmd[0] - self.step_distance_target, self.target_pos_cmd[1], self.target_yaw)
+        elif action =="left":
+            self.setTargetCmd(
+                self.target_pos_cmd[0] , self.target_pos_cmd[1]+ self.step_distance_target, self.target_yaw)
+        else :
+            self.setTargetCmd(
+                self.target_pos_cmd[0] , self.target_pos_cmd[1]- self.step_distance_target, self.target_yaw)
 
     def getHistorySize(self):
         return self.history_size
@@ -184,9 +228,8 @@ class OmniRobot(object):
         """
         self.robot_pos[0] = pose_stamped_msg.pose.position.x
         self.robot_pos[1] = pose_stamped_msg.pose.position.y
-        self.robot_yaw = \
-            euler_from_quaternion([pose_stamped_msg.pose.orientation.x, pose_stamped_msg.pose.orientation.y,
-                                   pose_stamped_msg.pose.orientation.z, pose_stamped_msg.pose.orientation.w])[2]
+        self.robot_yaw = euler_from_quaternion([pose_stamped_msg.pose.orientation.x, pose_stamped_msg.pose.orientation.y,
+                                                pose_stamped_msg.pose.orientation.z, pose_stamped_msg.pose.orientation.w])[2]
 
         if NO_TARGET_MODE and self.target_pos_changed:
             # simulate the target's position update
@@ -204,13 +247,12 @@ class OmniRobot(object):
         """
 
         if self.target_pos_changed:
-            if pose_stamped_msg.pose.position.x < TARGET_MAX_X and pose_stamped_msg.pose.position.x > TARGET_MIN_X \
+            if pose_stamped_msg.pose.position.x < TARGET_MAX_X and pose_stamped_msg.pose.position.x > TARGET_MIN_X  \
                     and pose_stamped_msg.pose.position.y > TARGET_MIN_Y and pose_stamped_msg.pose.position.y < TARGET_MAX_Y:
                 self.target_pos[0] = pose_stamped_msg.pose.position.x
                 self.target_pos[1] = pose_stamped_msg.pose.position.y
-                self.target_yaw = \
-                    euler_from_quaternion([pose_stamped_msg.pose.orientation.x, pose_stamped_msg.pose.orientation.y,
-                                           pose_stamped_msg.pose.orientation.z, pose_stamped_msg.pose.orientation.w])[2]
+                self.target_yaw = euler_from_quaternion([pose_stamped_msg.pose.orientation.x, pose_stamped_msg.pose.orientation.y,
+                                                         pose_stamped_msg.pose.orientation.z, pose_stamped_msg.pose.orientation.w])[2]
                 self.target_pos_changed = False
 
     def moveFinishedCallback(self, move_finished_msg):
@@ -307,7 +349,7 @@ class OmniRobot(object):
         :param front_speed: (float) linear speed of front wheel (meter/s)
         :param right_speed: (float) linear speed of right wheel (meter/s)
         """
-        assert self.enabled_pos_controller == False and self.enabled_velocity_controller == False, \
+        assert self.enabled_pos_controller == False and self.enabled_velocity_controller == False,\
             "you should disable pos_controller and velocity controller before controlling wheel speed directly"
         wheel_speed_msg = WheelSpeeds()
         wheel_speed_msg.stamp = rospy.now()
@@ -342,6 +384,7 @@ class OmniRobot(object):
         velocity_command_msg.angular.y = 0
         velocity_command_msg.angular.z = speed_yaw
         self.velocity_command_pub.publish(velocity_command_msg)
+
 
     @staticmethod
     def normalizeAngle(angle):
@@ -380,7 +423,7 @@ class ImageCallback(object):
                 up_margin = int((shape[0] - min_length) / 2)  # row
                 left_margin = int((shape[1] - min_length) / 2)  # col
                 self.valid_box = [up_margin, up_margin + min_length, left_margin, left_margin + min_length]
-                print("origin size: {}x{}".format(shape[0], shape[1]))
+                print("origin size: {}x{}".format(shape[0],shape[1]))
                 print("crop each image to a square image, cropped size: {}x{}".format(min_length, min_length))
                 self.first_msg = False
 
@@ -427,14 +470,14 @@ class OmnirobotManager(OmnirobotManagerBase):
     """
     def __init__(self):
         super(OmnirobotManager, self).__init__(second_cam_topic=SECOND_CAM_TOPIC)
-        self.robot = OmniRobot(0, 0, 0)  # assign the real robot object to manager
+        self.robot = OmniRobot(0,0,0) # assign the real robot object to manager
         self.episode_idx = 0
         self.episode_step = 0
 
     def resetEpisode(self):
         """
-        override original method
-        Give the correct sequence of commands to the robot
+        override orignal method
+        Give the correct sequance of commands to the robot 
         to rest environment between the different episodes
         """
         if self.second_cam_topic is not None:
@@ -467,19 +510,9 @@ class OmnirobotManager(OmnirobotManagerBase):
                 print("Can't see the target, please move it into the boundary!")
 
 def SetMarkers(image, robot_path, target_path, omnirobot, pos_transformer, marker_finder):
-    """
-    cover the robot and target image on the image that is going to be feed to the model
-    :param image: 
-    :param robot_path: 
-    :param target_path: 
-    :param omnirobot: 
-    :param pos_transformer: 
-    :param marker_finder: 
-    :return: 
-    """
     image_copy = image.copy()
     target_marker_margin = [4, 4, 4, 4]
-    robot_marker_margin = [3, 3, 3, 3]
+    robot_marker_margin = [4, 4, 4, 4]
     target_render = MarkerRender(noise_var=NOISE_VAR_TARGET_PIXEL)
     robot_render = MarkerRender(noise_var=NOISE_VAR_ROBOT_PIXEL)
     robot_render.setMarkerImage(cv2.imread(
@@ -489,18 +522,26 @@ def SetMarkers(image, robot_path, target_path, omnirobot, pos_transformer, marke
     robot_pixel_pos = marker_finder.getMarkerPose(image_copy, 'robot', False)
     # render the target and robot's image
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    image = target_render.addMarker(image, pos_transformer.phyPosGround2PixelPos(omnirobot.target_pos)-np.array([80,0]).reshape((2, 1)),
-                                   omnirobot.target_yaw, 1.05)
-    if target_path == "real_robots/omnirobot_utils/red_square.png":
-        image = robot_render.addMarker(image, np.array(robot_pixel_pos).reshape((2, 1))-np.array([-3,3]).reshape((2, 1)), omnirobot.robot_yaw, 1.05)
+    if target_path == "real_robots/omnirobot_utils/blue_square.png":
+        image = target_render.addMarker(image, pos_transformer.phyPosGround2PixelPos(np.array([0, 0]).reshape((2, 1))) -
+                                        np.array([80, 0]).reshape((2, 1)), 0, 1.0)
+    else:
+        image = target_render.addMarker(image, pos_transformer.phyPosGround2PixelPos(\
+            omnirobot.target_pos)-np.array([80,0]).reshape((2, 1)), omnirobot.target_yaw, 1.05)
+    if target_path == "real_robots/omnirobot_utils/red_square.png" or target_path == \
+            "real_robots/omnirobot_utils/yellow_T.png":
+        image = robot_render.addMarker(image, np.array(robot_pixel_pos).reshape((2, 1)) - \
+                                       np.array([-4,4]).reshape((2, 1)), omnirobot.robot_yaw, 1.05)
     image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+    # generate a noise help a better performance of the distillation model
+    image = omnirobot.renderEnvLuminosityNoise(image, noise_var=0.03)
     return image
 
 if __name__ == '__main__':
     with open(CAMERA_INFO_PATH, 'r') as stream:
         try:
             contents = yaml.load(stream)
-            camera_matrix = np.array(contents['camera_matrix']['data']).reshape((3, 3))
+            camera_matrix = np.array(contents['camera_matrix']['data']).reshape((3,3))
             distortion_coefficients = np.array(
                 contents['distortion_coefficients']['data']).reshape((1, 5))
         except yaml.YAMLError as exc:
@@ -540,6 +581,7 @@ if __name__ == '__main__':
     task = socket.recv_json()
     simple_continual_target = False
     circular_continual_move = False
+    escape_continual_move = False
     # set the robot and target image path
     if task['task'] == 'simple_continual':
         target_path = "real_robots/omnirobot_utils/red_square.png"
@@ -549,8 +591,14 @@ if __name__ == '__main__':
         circular_continual_move =True
     elif task['task'] == 'square_continual':
         target_path = "real_robots/omnirobot_utils/green_square.png"
+    elif task['task'] == 'escape_continual':
+        target_path = "real_robots/omnirobot_utils/yellow_T.png"
+        escape_continual_move = True
+    else:
+        raise Exception('Unknown task input, please try again.')
     robot_path = "real_robots/omnirobot_utils/robot_margin3_pixel_only_tag.png"
-
+    assert (escape_continual_move or circular_continual_move) and NO_TARGET_MODE or simple_continual_target, \
+        "The esc and cc task can only run in NO_TARGET_MODE in the moment. Please wait for updates."
     print("Task received, doing task : {}, using : {}".format(task['task'], target_path))
 
     action = 0
@@ -565,6 +613,7 @@ if __name__ == '__main__':
     omnirobot_manager.robot.reset()
     omnirobot_manager.simple_continual_target = simple_continual_target
     omnirobot_manager.circular_continual_move = circular_continual_move
+    omnirobot_manager.escape_continual_move = escape_continual_move
     reward_total = 0.0
 
     omnirobot_manager.robot.pubPosCmd()
@@ -593,6 +642,16 @@ if __name__ == '__main__':
         omnirobot_manager.processMsg(msg)
         if msg.get('command', None) == 'reset':
             reward_total = 0
+            if (omnirobot_manager.circular_continual_move and NO_TARGET_MODE) \
+                    or omnirobot_manager.escape_continual_move:
+                raw_input("NO TARGET MODE or in escape task, please press 'ENTER' to restart.")
+                if omnirobot_manager.escape_continual_move:
+                    random_init_x = np.random.random_sample() * (TARGET_MAX_X - TARGET_MIN_X) + \
+                                    TARGET_MIN_X
+                    random_init_y = np.random.random_sample() * (TARGET_MAX_Y - TARGET_MIN_Y) + \
+                                    TARGET_MIN_Y
+                    omnirobot_manager.robot.setTargetCmd(random_init_x, random_init_y, 0)
+                    print("Target was initialized to :", omnirobot_manager.robot.target_pos)
 
         # wait for robot to finish the action, timeout 30s
         timeout = 30  # second
@@ -640,9 +699,7 @@ if __name__ == '__main__':
                                         pos_transformer,marker_finder)
             img = np.ascontiguousarray(original_image, dtype=np.uint8)
             sendMatrix(socket, img)
-
         r.sleep()
         print("Time step :", msg['step_counter'],  "Total reward : ", reward_total)
-    cv2.destroyAllWindows()
     print("Exiting server - closing socket...")
     socket.close()
