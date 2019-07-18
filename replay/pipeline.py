@@ -1,3 +1,6 @@
+"""
+A plotting script to load training reward and plot directly to compare different results
+"""
 import argparse
 import os
 
@@ -7,7 +10,7 @@ import seaborn as sns
 from matplotlib.ticker import FuncFormatter
 import json
 
-from rl_baselines.visualize import  movingAverage, loadCsv,loadData
+from rl_baselines.visualize import movingAverage, loadCsv, loadData
 from replay.aggregate_plots import lightcolors, darkcolors, Y_LIM_SHAPED_REWARD, Y_LIM_SPARSE_REWARD, millions
 from srl_zoo.utils import printGreen, printRed, printYellow
 
@@ -15,8 +18,6 @@ from srl_zoo.utils import printGreen, printRed, printYellow
 sns.set()
 # Style for the title
 fontstyle = {'fontname': 'DejaVu Sans', 'fontsize': 16}
-
-
 
 
 def loadEpisodesData(folder):
@@ -34,8 +35,17 @@ def loadEpisodesData(folder):
     return x, y
 
 
-def plotGatheredData(x_list,y_list,y_limits, timesteps,title,legends,no_display,truncate_x=-1,normalization=False):
-    assert len(legends)==len(y_list)
+def plotGatheredData(
+        x_list,
+        y_list,
+        y_limits,
+        timesteps,
+        title,
+        legends,
+        no_display,
+        truncate_x=-1,
+        normalization=False):
+    assert len(legends) == len(y_list)
     printGreen("{} Experiments".format(len(y_list)))
 
     lengths = list(map(len, x_list))
@@ -43,18 +53,17 @@ def plotGatheredData(x_list,y_list,y_limits, timesteps,title,legends,no_display,
     if truncate_x > 0:
         min_x = min(truncate_x, min_x)
     x = np.array(x_list[0][:min_x])
-    #To reformulize the data by the min_x
+    # To reformulize the data by the min_x
     for i in range(len(y_list)):
-        y_list[i]=y_list[i][:, :min_x]
-    y_list=np.array(y_list)
+        y_list[i] = y_list[i][:, :min_x]
+    y_list = np.array(y_list)
 
     #print("Min, Max rewards:", np.min(y_list), np.max(y_list))
 
-
-    #Normalize the data between 0 and 1.
+    # Normalize the data between 0 and 1.
     if (normalization):
         y_limits = [-0.05, 1.05]
-        y_list   =(y_list-np.min(y_list))/(np.max(y_list)-np.min(y_list))
+        y_list = (y_list - np.min(y_list)) / (np.max(y_list) - np.min(y_list))
 
     fig = plt.figure(title)
     for i in range(len(y_list)):
@@ -67,8 +76,13 @@ def plotGatheredData(x_list,y_list,y_limits, timesteps,title,legends,no_display,
         # Compute standard error
         s = np.squeeze(np.asarray(np.std(y, axis=0)))
         n = y.shape[0]
-        plt.fill_between(x, m - s / np.sqrt(n), m + s / np.sqrt(n), color=lightcolors[i % len(lightcolors)], alpha=0.5)
-        plt.plot(x, m, color=darkcolors[i % len(darkcolors)], label=label, linewidth=2)
+        plt.fill_between(x,
+                         m - s / np.sqrt(n),
+                         m + s / np.sqrt(n),
+                         color=lightcolors[i % len(lightcolors)],
+                         alpha=0.5)
+        plt.plot(x, m, color=darkcolors[i %
+                                        len(darkcolors)], label=label, linewidth=2)
 
     if timesteps:
         formatter = FuncFormatter(millions)
@@ -83,16 +97,19 @@ def plotGatheredData(x_list,y_list,y_limits, timesteps,title,legends,no_display,
     plt.title(title, **fontstyle)
     plt.ylim(y_limits)
 
-    plt.legend(framealpha=0.8, frameon=True, labelspacing=0.01, loc='lower right', fontsize=16)
+    plt.legend(
+        framealpha=0.8,
+        frameon=True,
+        labelspacing=0.01,
+        loc='lower right',
+        fontsize=16)
 
     if not no_display:
         plt.show()
 
 
-
-
-def GatherExperiments(folders, algo,  window=40, title="", min_num_x=-1,
-                            timesteps=False, output_file="",):
+def GatherExperiments(folders, algo, window=40, title="", min_num_x=-1,
+                      timesteps=False, output_file="",):
     """
     Compute mean and standard error for several experiments and plot the learning curve
     :param folders: ([str]) Log folders, where the monitor.csv are stored
@@ -123,7 +140,8 @@ def GatherExperiments(folders, algo,  window=40, title="", min_num_x=-1,
 
         if y.shape[0] <= window:
             printYellow("Folder {}".format(folder))
-            printYellow("Not enough episodes for current window size = {}".format(window))
+            printYellow(
+                "Not enough episodes for current window size = {}".format(window))
             continue
         ok = True
         y = movingAverage(y, window)
@@ -153,11 +171,18 @@ def GatherExperiments(folders, algo,  window=40, title="", min_num_x=-1,
     # if output_file != "":
     #     printGreen("Saving aggregated data to {}.npz".format(output_file))
     #     np.savez(output_file, x=x, y=y)
-    return x,y
+    return x, y
 
 
-def comparePlots(path,  algo,y_limits,title="Learning Curve",
-                 timesteps=False, truncate_x=-1, no_display=False,normalization=False):
+def comparePlots(
+        path,
+        algo,
+        y_limits,
+        title="Learning Curve",
+        timesteps=False,
+        truncate_x=-1,
+        no_display=False,
+        normalization=False):
     """
     :param path: (str) path to the folder where the plots are stored
     :param plots: ([str]) List of saved plots as npz file
@@ -170,14 +195,14 @@ def comparePlots(path,  algo,y_limits,title="Learning Curve",
 
     folders = []
     other = []
-    legends=[]
+    legends = []
     for folder in os.listdir(path):
-        folders_srl=[]
-        other_srl=[]
+        folders_srl = []
+        other_srl = []
         tmp_path = "{}/{}/{}/".format(path, folder, algo)
         legends.append(folder)
         for f in os.listdir(tmp_path):
-            paths = "{}/{}/{}/{}/".format(path, folder, algo,f)
+            paths = "{}/{}/{}/{}/".format(path, folder, algo, f)
             env_globals = json.load(open(paths + "env_globals.json", 'r'))
             train_args = json.load(open(paths + "args.json", 'r'))
             if train_args["shape_reward"] == args.shape_reward:
@@ -187,44 +212,53 @@ def comparePlots(path,  algo,y_limits,title="Learning Curve",
         folders.append(folders_srl)
         other.append(other_srl)
 
-
-    x_list,y_list=[],[]
+    x_list, y_list = [], []
     for folders_srl in folders:
         printGreen("Folder name {}".format(folders_srl))
-        x,y=GatherExperiments(folders_srl, algo,  window=40, title=title, min_num_x=-1,
-                          timesteps=timesteps, output_file="")
+        x, y = GatherExperiments(folders_srl, algo, window=40, title=title,
+                                 min_num_x=-1, timesteps=timesteps, output_file="")
         print(len(x))
         x_list.append(x)
         y_list.append(y)
     printGreen(np.array(x_list).shape)
     # printGreen('y_list shape {}'.format(np.array(y_list[1]).shape))
 
-    plotGatheredData(x_list,y_list,y_limits,timesteps,title,legends,no_display,truncate_x,normalization)
-
+    plotGatheredData(
+        x_list,
+        y_list,
+        y_limits,
+        timesteps,
+        title,
+        legends,
+        no_display,
+        truncate_x,
+        normalization)
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Plot trained agent")
     parser.add_argument('-i', '--input-dir', help='folder with the plots as npz files', type=str, required=True)
-    parser.add_argument('-t', '--title', help='Plot title', type=str, default='Learning Curve')
-    parser.add_argument('--episode_window', type=int, default=40,
-                        help='Episode window for moving average plot (default: 40)')
-    parser.add_argument('--shape-reward', action='store_true', default=False,
-                        help='Change the y_limit to correspond shaped reward bounds')
-    parser.add_argument('--y-lim', nargs=2, type=float, default=[-1, -1], help="limits for the y axis")
-    parser.add_argument('--truncate-x', type=int, default=-1,
-                        help="Truncate the experiments after n ticks on the x-axis (default: -1, no truncation)")
+    parser.add_argument('-t', '--title', help='Plot title', type=str,
+        default='Learning Curve')
+    parser.add_argument(
+        '--episode_window', type=int, default=40, help='Episode window for moving average plot (default: 40)')
+    parser.add_argument(
+        '--shape-reward', action='store_true', default=False,
+        help='Change the y_limit to correspond shaped reward bounds')
+    parser.add_argument('--y-lim', nargs=2, type=float,
+                        default=[-1, -1], help="limits for the y axis")
+    parser.add_argument( '--truncate-x', type=int, default=-1,
+        help="Truncate the experiments after n ticks on the x-axis (default: -1, no truncation)")
     parser.add_argument('--timesteps', action='store_true', default=False,
                         help='Plot timesteps instead of episodes')
-    parser.add_argument('--no-display', action='store_true', default=False, help='Do not display plot')
-    parser.add_argument('--algo',type=str,default='ppo2',help='The RL algorithms result to show')
-    parser.add_argument('--norm', action='store_true', default=False, help='To normalize the output by the maximum reward')
-    #
-    # parser.add_argument('--tasks', type=str, nargs='+', default=["cc"],
-    #                     help='The tasks for the robot',
-    #                     choices=["cc", "ec", "sqc", "sc"])
-
-
+    parser.add_argument(
+        '--no-display',
+        action='store_true',
+        default=False,
+        help='Do not display plot')
+    parser.add_argument('--algo', type=str, default='ppo2', help='The RL algorithms result to show')
+    parser.add_argument('--norm', action='store_true', default=False,
+        help='To normalize the output by the maximum reward')
 
     args = parser.parse_args()
 
@@ -236,15 +270,21 @@ if __name__ == '__main__':
             y_limits = Y_LIM_SPARSE_REWARD
         print("Using default limits:", y_limits)
 
+    ALGO_NAME = args.algo
 
-    ALGO_NAME=args.algo
+    x_list = []
+    y_list = []
+
+    comparePlots(
+        args.input_dir,
+        args.algo,
+        title=args.title,
+        y_limits=y_limits,
+        no_display=args.no_display,
+        timesteps=args.timesteps,
+        truncate_x=args.truncate_x,
+        normalization=args.norm)
 
 
-    x_list=[]
-    y_list=[]
-
-    comparePlots(args.input_dir, args.algo, title=args.title, y_limits=y_limits, no_display=args.no_display,
-            timesteps=args.timesteps, truncate_x=args.truncate_x,normalization=args.norm)
-
-
-#python -m replay.pipeline -i logs/OmnirobotEnv-v0 --algo ppo2 --title cc --timesteps
+# python -m replay.pipeline -i logs/OmnirobotEnv-v0 --algo ppo2 --title cc
+# --timesteps

@@ -15,7 +15,7 @@ import seaborn as sns
 
 from rl_baselines import AlgoType
 from rl_baselines.registry import registered_rl
-from rl_baselines.utils import createTensorflowSession, computeMeanReward, WrapFrameStack, softmax
+from rl_baselines.utils import computeMeanReward, WrapFrameStack, softmax
 from srl_zoo.utils import printYellow, printGreen
 # has to be imported here, as otherwise it will cause loading of undefined functions
 from environments import PlottingType
@@ -208,7 +208,6 @@ def main():
     # createTensorflowSession()
 
     printYellow("Compiling Policy function....")
-    printYellow(load_path)
     method = algo_class.load(load_path, args=algo_args)
 
     dones = [False for _ in range(load_args.num_cpu)]

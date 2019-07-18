@@ -366,7 +366,7 @@ def main():
         args.num_cpu = args.num_episode
         printYellow("num_cpu cannot be greater than num_episode, defaulting to {} cpus.".format(args.num_cpu))
 
-    assert sum([args.simple_continual, args.circular_continual, args.square_continual]) <= 1, \
+    assert sum([args.simple_continual, args.circular_continual, args.square_continual, args.escape_continual]) <= 1, \
         "For continual SRL and RL, please provide only one scenario at the time !"
 
     assert not (args.log_custom_policy == '' and args.run_policy in ['walker', 'custom']), \

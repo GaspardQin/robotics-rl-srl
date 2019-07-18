@@ -37,7 +37,6 @@ CROSS_EVAL = False
 EPISODE_WINDOW_DISTILLATION_WIN = 20
 NEW_LR = 0.001
 
-
 viz = None
 n_steps = 0
 SAVE_INTERVAL = 0  # initialised during loading of the algorithm

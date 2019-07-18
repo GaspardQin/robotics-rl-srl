@@ -295,6 +295,13 @@ class OmniRobotEnvRender():
             self.robot_pos_cmd[0] + action[0], self.robot_pos_cmd[1] + action[1], self.robot_yaw_cmd)
 
     def targetMoveDiscrete(self, target_yaw):
+        """
+        It is not used for the moment
+        It might be useful if we want a policy for the zombie robot to perform a turn towards the agent robot
+         and move according to this direction
+        :param target_yaw:
+        :return:
+        """
         pi = np.pi
         assert target_yaw > -pi and target_yaw < pi
         target_yaw += pi
