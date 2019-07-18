@@ -4,8 +4,6 @@ import subprocess
 import shutil
 import pytest
 import os
-from environments import ThreadingType
-from environments.registry import registered_env
 
 DEFAULT_ALGO = "ppo2"
 DEFAULT_SRL = "raw_pixels"

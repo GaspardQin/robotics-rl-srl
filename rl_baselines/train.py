@@ -20,8 +20,7 @@ from rl_baselines import AlgoType, ActionType
 from rl_baselines.registry import registered_rl
 from rl_baselines.utils import computeMeanReward
 from rl_baselines.utils import filterJSONSerializableObjects
-from rl_baselines.visualize import timestepsPlot, episodePlot,episodesEvalPlot
-from rl_baselines.cross_eval import episodeEval
+from rl_baselines.visualize import timestepsPlot, episodePlot
 from srl_zoo.utils import printGreen, printYellow
 from state_representation import SRLType
 from state_representation.registry import registered_srl
@@ -36,18 +35,18 @@ PLOT_TITLE = ""
 EPISODE_WINDOW = 40  # For plotting moving average
 CROSS_EVAL = False
 EPISODE_WINDOW_DISTILLATION_WIN = 20
-NEW_LR=0.001
+NEW_LR = 0.001
 
 
 viz = None
 n_steps = 0
 SAVE_INTERVAL = 0  # initialised during loading of the algorithm
 N_EPISODES_EVAL = 100  # Evaluate the performance on the last 100 episodes
-MIN_EPISODES_BEFORE_SAVE = 1000  # Number of episodes to train on before saving best model
+MIN_EPISODES_BEFORE_SAVE = 100  # Number of episodes to train on before saving best model
 params_saved = False
 best_mean_reward = -10000
 
-win, win_smooth, win_episodes, win_crossEval= None, None, None, None
+win, win_smooth, win_episodes, win_crossEval = None, None, None, None
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # used to remove debug info of tensorflow
 
@@ -183,7 +182,6 @@ def callback(_locals, _globals):
                             os.mkdir(LOG_DIR + "model_" + str(n_episodes))
                         except OSError:
                             pass
-                            #print("Creation of the directory {} failed".format(eps_path))
 
                         ALGO.save("{}/{}".format(eps_path, ALGO_NAME + "_model.pkl"), _locals)
                         try:
@@ -267,8 +265,6 @@ def main():
                         help='number of epochs to train for distillation(default: 30)')
     parser.add_argument('--distillation-training-set-size', type=int, default=-1,
                         help='Limit size (number of samples) of the training set (default: -1)')
-    parser.add_argument('--perform-cross-evaluation-cc', action='store_true', default=False,
-                        help='A cross evaluation from the latest stored model to all tasks')
     parser.add_argument('--eval-episode-window', type=int, default=400, metavar='N',
                         help='Episode window for saving each policy checkpoint for future distillation(default: 100)')
     parser.add_argument('--new-lr', type=float, default=1.e-4,
@@ -314,7 +310,6 @@ def main():
     VISDOM_PORT = args.port
     EPISODE_WINDOW = args.episode_window
     MIN_EPISODES_BEFORE_SAVE = args.min_episodes_save
-    CROSS_EVAL = args.perform_cross_evaluation_cc
     EPISODE_WINDOW_DISTILLATION_WIN = args.eval_episode_window
     NEW_LR =args.new_lr
     print("EPISODE_WINDOW_DISTILLATION_WIN: ", EPISODE_WINDOW_DISTILLATION_WIN)
